@@ -1,0 +1,23 @@
+{
+  "name": "connduit",
+  "version": "0.1.0",
+  "description": "A Rust-powered API gateway",
+  "keywords": [
+    "\"api-gateway\""
+  ],
+  "homepage": "https://github.com/salmanwnl44/connduit#readme",
+  "bugs": {
+    "url": "https://github.com/salmanwnl44/connduit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/salmanwnl44/connduit.git"
+  },
+  "license": "MIT",
+  "author": "Salman Ansari",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  }
+}
