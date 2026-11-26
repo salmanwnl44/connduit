@@ -1,0 +1,69 @@
+[package]
+name = "connduit"
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.85"
+description = "A small configurable HTTP reverse proxy"
+license = "MIT"
+authors = ["Salman Ansari <salmanwnl4@gmail.com>"]
+repository = "https://github.com/salmanwnl44/connduit"
+homepage = "https://github.com/salmanwnl44/connduit#readme"
+readme = "README.md"
+keywords = ["api-gateway", "reverse-proxy", "http", "proxy", "rust"]
+categories = ["network-programming", "web-programming::http-server"]
+publish = false
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+tokio = { version = "1", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+    "net",
+    "signal",
+    "time",
+] }
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+serde = { version = "1", default-features = false, features = ["derive", "std"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+clap = { version = "4", default-features = false, features = [
+    "derive",
+    "std",
+    "help",
+    "usage",
+    "error-context",
+    "suggestions",
+] }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "env-filter",
+] }
+url = { version = "2", default-features = false, features = ["std"] }
+http = "1"
+
+[dev-dependencies]
+serde_json = "1"
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+
+# The baseline manifest is created whole from the frozen specification
+# (`versions/connduit-v0.0.1-engineering-pack/Cargo.toml.example`, spec task
+# T002), so most crates are unreferenced until their module lands:
+# tokio/axum in M03, serde/toml/url in M01, clap in M01, reqwest in M04,
+# thiserror in M05, tracing-subscriber in M05.
+# The full set is verified to resolve and compile. This manifest-level lint is
+# silenced only until the modules exist; remove it at M06 (M06-04).
+[lints.cargo]
+unused_dependencies = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
