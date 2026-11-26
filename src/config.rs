@@ -1,13 +1,12 @@
-//! Configuration model and loader for the v0.0.1 TOML contract.
+//! Configuration model and loader for the v0.0.1 contract.
 //!
-//! This module defines the *shape* of a configuration file and reads it from
-//! disk. It performs no semantic validation: that is the validator's job in
-//! M01-04.
+//! This module defines the shape of a configuration file and reads it from
+//! disk. Semantic validation lives in [`validation`] and runs after loading,
+//! before the listener binds.
 //!
-//! Scalars stay in their transport form (`String`) here. Turning them into
-//! `SocketAddr`, `Url`, and `Method` belongs to validation, so an invalid
-//! address is reported against its field path rather than as an opaque
-//! deserialization failure.
+//! Scalars stay in their transport form (`String`) here. Converting them into
+//! `SocketAddr`, `Url`, and `Method` is the validator's job, so a bad value is
+//! reported against its field path rather than as an opaque parse failure.
 //!
 //! The normative contract is
 //! `versions/connduit-v0.0.1-engineering-pack/docs/CONFIGURATION.md`.
@@ -15,6 +14,12 @@
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+pub mod validation;
+
+pub use validation::{
+    ValidatedConfig, ValidatedRoute, ValidatedUpstream, ValidationError, validate_config,
+};
 
 /// Root of a Connduit configuration file.
 #[derive(Debug, Deserialize)]
@@ -113,15 +118,13 @@ pub enum ConfigError {
 /// Reads and deserializes a configuration file.
 ///
 /// This performs blocking file I/O and is intended for startup only, never from
-/// a request path.
+/// a request path. It does not validate: call
+/// [`validate_config`] on the result.
 ///
 /// # Errors
 ///
 /// Returns [`ConfigError`] when the file is missing, cannot be read, is not
 /// valid TOML, defines an unknown field, or does not match the schema.
-///
-/// Semantic checks, such as address parsing and upstream references, are not
-/// performed here.
 pub fn load_config(path: &Path) -> Result<AppConfig, ConfigError> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
