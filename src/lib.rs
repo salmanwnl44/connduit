@@ -4,8 +4,8 @@
 //! error handling. Normative behavior is defined by the frozen v0.0.1
 //! engineering pack under `versions/connduit-v0.0.1-engineering-pack/`.
 //!
-//! Only [`run`] is public at this stage. Each module is declared when its
-//! behavior lands, so that the public API never advertises an empty module:
+//! Each module is declared when its behavior lands, so that the public API
+//! never advertises an empty module:
 //!
 //! | Module | Introduced by |
 //! |---|---|
@@ -13,6 +13,8 @@
 //! | `routing` | M02 |
 //! | `forwarding` | M04 |
 //! | `error` | M05 |
+
+pub mod config;
 
 use std::process::ExitCode;
 
