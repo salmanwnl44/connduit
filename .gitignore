@@ -1,0 +1,49 @@
+# Rust build output
+/target/
+**/*.rs.bk
+*.pdb
+*.orig
+*.rej
+
+# Cargo.lock is committed for this binary; do not ignore it.
+
+# Local agent/tool state
+.opencode/
+.aider*
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+
+# Logs and coverage
+*.log
+coverage/
+lcov.info
+tarpaulin-report.*
+*.profraw
+
+# Legacy Node scaffolding (remove with package.json)
+node_modules/
+npm-debug.log*
+
+# Fuzzing build output; keep fuzz/corpus for regressions
+fuzz/target/
+fuzz/artifacts/
