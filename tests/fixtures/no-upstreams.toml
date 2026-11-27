@@ -1,0 +1,17 @@
+version = 1
+upstreams = []
+
+[server]
+address = "127.0.0.1:8080"
+
+[[routes]]
+id = "users-api"
+path = "/api/users"
+methods = ["GET", "POST"]
+upstream = "users"
+
+[[routes]]
+id = "catalog-api"
+path = "/api/catalog"
+methods = ["GET"]
+upstream = "catalog"
