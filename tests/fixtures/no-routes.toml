@@ -1,0 +1,13 @@
+version = 1
+routes = []
+
+[server]
+address = "127.0.0.1:8080"
+
+[[upstreams]]
+id = "users"
+url = "http://127.0.0.1:3001"
+
+[[upstreams]]
+id = "catalog"
+url = "http://127.0.0.1:3002"
