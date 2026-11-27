@@ -15,6 +15,7 @@
 //! | `error` | M05 |
 
 pub mod config;
+pub mod routing;
 
 use std::path::Path;
 
