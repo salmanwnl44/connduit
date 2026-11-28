@@ -17,8 +17,14 @@
 pub mod config;
 pub mod routing;
 
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+
+use axum::Router;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use tokio::net::TcpListener;
 
 /// Process-wide state shared by every request.
 ///
@@ -93,9 +99,20 @@ pub enum StartupError {
     /// The upstream HTTP client could not be built.
     #[error("failed to build the upstream HTTP client: {0}")]
     Client(#[from] reqwest::Error),
-    /// Loading and validation succeeded, but the listener does not exist yet.
-    #[error("the HTTP listener is not implemented yet")]
-    ListenerNotImplemented,
+    /// The listener could not bind the configured address.
+    ///
+    /// The usual cause is another process holding the port.
+    #[error("cannot bind to {address}: {source}")]
+    Bind {
+        /// Address the listener tried to use.
+        address: SocketAddr,
+        /// Underlying I/O failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The server stopped because of an I/O failure.
+    #[error("the HTTP server stopped: {0}")]
+    Serve(#[from] std::io::Error),
 }
 
 /// Renders validation errors one per line, indented for readability.
@@ -107,29 +124,57 @@ fn format_validation_errors(errors: &[config::ValidationError]) -> String {
         .join("\n")
 }
 
-/// Loads and validates the configuration, then starts the gateway.
+/// Loads and validates the configuration, then serves until the process stops.
 ///
 /// # Errors
 ///
 /// Returns [`StartupError::Config`] when the file is missing or malformed,
 /// [`StartupError::Invalid`] when it fails a semantic rule,
-/// [`StartupError::Client`] when the HTTP client cannot be built, and
-/// [`StartupError::ListenerNotImplemented`] until M03 lands. Nothing is served
-/// on any path; a zero exit is never returned yet.
-pub fn run(config_path: &Path) -> Result<(), StartupError> {
+/// [`StartupError::Client`] when the HTTP client cannot be built,
+/// [`StartupError::Bind`] when the address is unavailable, and
+/// [`StartupError::Serve`] when the server stops with an I/O failure.
+pub async fn run(config_path: &Path) -> Result<(), StartupError> {
     let config = config::load_config(config_path)?;
     let validated = config::validate_config(config).map_err(StartupError::Invalid)?;
 
     // One client for the process lifetime. Its builder options are refined by
-    // M04-01; building it here already proves it can be constructed before any
-    // request arrives.
+    // M04-01; building it here proves it can be constructed before any request
+    // arrives.
     let client = reqwest::Client::builder().build()?;
+    let state = AppState::new(validated, client);
 
-    // Constructed once, then dropped because there is no listener yet. M03-02
-    // takes ownership of this value instead of discarding it.
-    let _state = AppState::new(validated, client);
+    let address = state.config().address;
+    let listener = TcpListener::bind(address)
+        .await
+        .map_err(|source| StartupError::Bind { address, source })?;
 
-    Err(StartupError::ListenerNotImplemented)
+    serve(listener, state).await
+}
+
+/// Serves requests on an already-bound listener until the future is dropped.
+///
+/// Taking a listener rather than an address lets callers bind port `0` in tests
+/// and read the assigned port.
+///
+/// # Errors
+///
+/// Returns [`StartupError::Serve`] when the server stops with an I/O failure.
+pub async fn serve(listener: TcpListener, state: AppState) -> Result<(), StartupError> {
+    let app = Router::new().fallback(placeholder).with_state(state);
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Temporary handler until request routing lands in M03-03.
+///
+/// It answers every request with `501 Not Implemented`, which is the honest
+/// status for a server that has not implemented request handling. It is replaced
+/// by the real router in the next issue and never ships.
+async fn placeholder() -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        "connduit: request handling is not implemented yet",
+    )
 }
 
 #[cfg(test)]
@@ -238,12 +283,12 @@ upstream = "users"
         assert_eq!(clone.routes().len(), state.routes().len());
     }
 
-    #[test]
-    fn reports_a_missing_configuration_file() {
+    #[tokio::test]
+    async fn reports_a_missing_configuration_file() {
         let path =
             std::env::temp_dir().join(format!("connduit-run-absent-{}.toml", std::process::id()));
 
-        let error = run(&path).expect_err("a missing file must fail");
+        let error = run(&path).await.expect_err("a missing file must fail");
 
         assert!(
             matches!(
@@ -254,11 +299,11 @@ upstream = "users"
         );
     }
 
-    #[test]
-    fn reports_invalid_configuration() {
+    #[tokio::test]
+    async fn reports_invalid_configuration() {
         let file = TempConfig::new("invalid", &VALID.replace("version = 1", "version = 2"));
 
-        let error = run(&file.0).expect_err("version 2 must be rejected");
+        let error = run(&file.0).await.expect_err("version 2 must be rejected");
 
         match error {
             StartupError::Invalid(errors) => {
@@ -272,15 +317,22 @@ upstream = "users"
         }
     }
 
-    #[test]
-    fn a_valid_configuration_reaches_the_listener_gap() {
-        let file = TempConfig::new("valid", VALID);
+    #[tokio::test]
+    async fn a_valid_configuration_reaches_the_bind_step() {
+        // Occupy a port so binding fails. Reaching `Bind` proves the run path
+        // got past loading, validation, and state construction.
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a port");
+        let address = occupied.local_addr().expect("read the local address");
+        let file = TempConfig::new(
+            "occupied",
+            &VALID.replace("127.0.0.1:8080", &address.to_string()),
+        );
 
-        let error = run(&file.0).expect_err("the listener is not implemented");
+        let error = run(&file.0).await.expect_err("an occupied port must fail");
 
         assert!(
-            matches!(error, StartupError::ListenerNotImplemented),
-            "expected ListenerNotImplemented, got: {error}"
+            matches!(error, StartupError::Bind { .. }),
+            "expected Bind, got: {error}"
         );
     }
 }
