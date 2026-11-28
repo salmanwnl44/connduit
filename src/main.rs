@@ -19,10 +19,11 @@ struct Cli {
     config: PathBuf,
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    match connduit::run(&cli.config) {
+    match connduit::run(&cli.config).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("connduit: {error}");
