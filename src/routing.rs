@@ -55,6 +55,38 @@ pub struct Route {
     pub methods: Vec<Method>,
 }
 
+impl Route {
+    /// Returns `true` when `method` is explicitly allowed by this route.
+    ///
+    /// The comparison is exact. `HEAD` and `OPTIONS` are never implied by
+    /// another method, which keeps route policy explicit.
+    #[must_use]
+    pub fn allows(&self, method: &Method) -> bool {
+        self.methods.contains(method)
+    }
+}
+
+/// The outcome of matching one request against the route table.
+///
+/// The caller maps this to a response: `404` for [`RouteMatch::NotFound`], `405`
+/// with the `Allow` header for [`RouteMatch::MethodNotAllowed`].
+#[derive(Debug)]
+pub enum RouteMatch<'a> {
+    /// The path matched and the method is allowed.
+    Matched(&'a Route),
+    /// No route prefix matched the path.
+    NotFound,
+    /// The path matched but the method is not allowed.
+    ///
+    /// `allow` holds exactly the configured methods, for the `Allow` header.
+    MethodNotAllowed {
+        /// The route whose prefix matched.
+        route: &'a Route,
+        /// Methods the route accepts, in configuration order.
+        allow: &'a [Method],
+    },
+}
+
 /// Routes ordered so that the longest prefix is considered first.
 ///
 /// The table is built once at startup and is immutable afterwards, so a lookup
@@ -88,6 +120,22 @@ impl RouteTable {
             .find(|route| matches_prefix(&route.path, path))
     }
 
+    /// Resolves a request to a routing outcome.
+    ///
+    /// A path match with a disallowed method is [`RouteMatch::MethodNotAllowed`],
+    /// never `NotFound`: the path exists, the method does not.
+    #[must_use]
+    pub fn resolve(&self, path: &str, method: &Method) -> RouteMatch<'_> {
+        match self.route_for(path) {
+            None => RouteMatch::NotFound,
+            Some(route) if route.allows(method) => RouteMatch::Matched(route),
+            Some(route) => RouteMatch::MethodNotAllowed {
+                route,
+                allow: &route.methods,
+            },
+        }
+    }
+
     /// Returns the number of routes in the table.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -105,7 +153,7 @@ impl RouteTable {
 mod tests {
     use http::Method;
 
-    use super::{Route, RouteTable, matches_prefix};
+    use super::{Route, RouteMatch, RouteTable, matches_prefix};
 
     /// The table from `HTTP_BEHAVIOR.md` §3, verbatim.
     const CONTRACT: &[(&str, &str, bool)] = &[
@@ -289,5 +337,129 @@ mod tests {
 
         assert_eq!(table.len(), 2);
         assert!(!table.is_empty());
+    }
+
+    // ---------- method decision ----------
+
+    fn table_with(methods: Vec<Method>) -> RouteTable {
+        RouteTable::new(vec![Route {
+            id: "api".to_owned(),
+            path: "/api".to_owned(),
+            upstream: "upstream".to_owned(),
+            methods,
+        }])
+    }
+
+    #[test]
+    fn a_matching_path_with_an_allowed_method_is_matched() {
+        let table = table_with(vec![Method::GET, Method::POST]);
+
+        match table.resolve("/api/users", &Method::GET) {
+            RouteMatch::Matched(route) => assert_eq!(route.id, "api"),
+            other => panic!("expected Matched, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_matching_path_is_not_found() {
+        let table = table_with(vec![Method::GET]);
+
+        assert!(matches!(
+            table.resolve("/other", &Method::GET),
+            RouteMatch::NotFound
+        ));
+    }
+
+    #[test]
+    fn a_matching_path_with_a_denied_method_is_method_not_allowed() {
+        let table = table_with(vec![Method::GET, Method::POST]);
+
+        match table.resolve("/api/users", &Method::DELETE) {
+            RouteMatch::MethodNotAllowed { route, allow } => {
+                assert_eq!(route.id, "api");
+                assert_eq!(allow, [Method::GET, Method::POST]);
+            }
+            other => panic!("expected MethodNotAllowed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_denied_method_is_405_not_404() {
+        let table = table_with(vec![Method::GET]);
+
+        // The path exists, so this must not be reported as a missing route.
+        assert!(!matches!(
+            table.resolve("/api/users", &Method::PUT),
+            RouteMatch::NotFound
+        ));
+    }
+
+    #[test]
+    fn the_allow_list_holds_exactly_the_configured_methods() {
+        let table = table_with(vec![Method::GET]);
+
+        match table.resolve("/api", &Method::POST) {
+            RouteMatch::MethodNotAllowed { allow, .. } => {
+                assert_eq!(allow, [Method::GET], "HEAD and OPTIONS must not be implied");
+            }
+            other => panic!("expected MethodNotAllowed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn head_is_not_implied_by_get() {
+        let table = table_with(vec![Method::GET]);
+
+        assert!(matches!(
+            table.resolve("/api", &Method::HEAD),
+            RouteMatch::MethodNotAllowed { .. }
+        ));
+    }
+
+    #[test]
+    fn options_is_not_implied() {
+        let table = table_with(vec![Method::GET, Method::POST]);
+
+        assert!(matches!(
+            table.resolve("/api", &Method::OPTIONS),
+            RouteMatch::MethodNotAllowed { .. }
+        ));
+    }
+
+    #[test]
+    fn method_matching_is_case_sensitive() {
+        let table = table_with(vec![Method::GET]);
+
+        // `Method::from_bytes(b"get")` is a legitimate extension method, but it
+        // is not `GET`.
+        let lowercase = Method::from_bytes(b"get").expect("extension method parses");
+        assert!(matches!(
+            table.resolve("/api", &lowercase),
+            RouteMatch::MethodNotAllowed { .. }
+        ));
+    }
+
+    #[test]
+    fn resolve_uses_the_longest_prefix_before_checking_the_method() {
+        let table = RouteTable::new(vec![
+            Route {
+                id: "api".to_owned(),
+                path: "/api".to_owned(),
+                upstream: "upstream".to_owned(),
+                methods: vec![Method::GET],
+            },
+            Route {
+                id: "users".to_owned(),
+                path: "/api/users".to_owned(),
+                upstream: "upstream".to_owned(),
+                methods: vec![Method::POST],
+            },
+        ]);
+
+        // `/api` would allow GET, but the longer `/api/users` wins and denies it.
+        match table.resolve("/api/users", &Method::GET) {
+            RouteMatch::MethodNotAllowed { route, .. } => assert_eq!(route.id, "users"),
+            other => panic!("expected MethodNotAllowed for the longer route, got {other:?}"),
+        }
     }
 }
